@@ -1,13 +1,16 @@
 .gitignore
 .pre-commit-config.yaml
+.readthedocs.yml
 CHANGELOG.rst
 LICENSE
 README.rst
 RELEASING.rst
+SECURITY.md
 mypy.ini
-setup.py
+pyproject.toml
 tox.ini
 .github/FUNDING.yml
+.github/dependabot.yml
 .github/workflows/deploy.yml
 .github/workflows/test.yml
 docs/about.rst

@@ -1,5 +1,7 @@
 ---
 Bug-Database: https://github.com/pytest-dev/pytest-mock/issues
 Bug-Submit: https://github.com/pytest-dev/pytest-mock/issues/new
+Documentation: https://pytest-mock.readthedocs.io/en/latest/
 Repository: https://github.com/pytest-dev/pytest-mock.git
 Repository-Browse: https://github.com/pytest-dev/pytest-mock
+Security-Contact: https://github.com/pytest-dev/pytest-mock/tree/HEAD/SECURITY.md

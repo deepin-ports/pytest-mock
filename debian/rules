@@ -2,21 +2,14 @@
 
 export PYBUILD_NAME=pytest-mock
 
-# Add the pytest-mock egg to the build dir, so pytest can find it when
-# running the tests.
 # The --assert=plain is needed to skip four tests; see
 # https://github.com/pytest-dev/pytest-mock/issues/102
 # for more information.
-export PYBUILD_BEFORE_TEST={interpreter} setup.py egg_info && cp -r {dir}/src/*.egg-info {build_dir}
 export PYBUILD_TEST_ARGS=--assert=plain {dir}/tests
-export PYBUILD_AFTER_TEST=rm -rf {build_dir}/*.egg-info {dir}/src/*.egg-info
-export PYBUILD_BEFORE_TEST=cp -r {dir}/src/*.egg-info {build_dir}
-export PYBUILD_TEST_ARGS=--assert=plain {dir}/tests
-export PYBUILD_AFTER_TEST=rm -rf {build_dir}/*.egg-info
 
 ifeq (,$(findstring nodoc,$(DEB_BUILD_OPTIONS)))
 %:
-	dh $@ --with sphinxdoc --buildsystem=pybuild
+	dh $@ --buildsystem=pybuild
 
 execute_after_dh_auto_build:
 	mkdir docs/_static

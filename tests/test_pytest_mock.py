@@ -3,12 +3,13 @@ import platform
 import re
 import sys
 import warnings
+from collections.abc import Generator
+from collections.abc import Iterable
+from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 from typing import Callable
-from typing import Generator
-from typing import Tuple
-from typing import Type
+from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 
 import pytest
@@ -23,11 +24,8 @@ skip_pypy = pytest.mark.skipif(
     platform.python_implementation() == "PyPy", reason="could not make it work on pypy"
 )
 
-# Python 3.8 changed the output formatting (bpo-35500), which has been ported to mock 3.0
-NEW_FORMATTING = sys.version_info >= (3, 8)
-
-if sys.version_info[:2] >= (3, 8):
-    from unittest.mock import AsyncMock
+# Python 3.11.7 changed the output formatting, https://github.com/python/cpython/issues/111019
+NEWEST_FORMATTING = sys.version_info >= (3, 11, 7)
 
 
 @pytest.fixture
@@ -58,6 +56,15 @@ class UnixFS:
     @classmethod
     def ls(cls, path):
         return os.listdir(path)
+
+
+class TestObject:
+    """
+    Class that is used for testing create_autospec with child mocks
+    """
+
+    def run(self) -> str:
+        return "not mocked"
 
 
 @pytest.fixture
@@ -93,15 +100,15 @@ def check_unix_fs_mocked(
     return check
 
 
-def mock_using_patch_object(mocker: MockerFixture) -> Tuple[MagicMock, MagicMock]:
+def mock_using_patch_object(mocker: MockerFixture) -> tuple[MagicMock, MagicMock]:
     return mocker.patch.object(os, "remove"), mocker.patch.object(os, "listdir")
 
 
-def mock_using_patch(mocker: MockerFixture) -> Tuple[MagicMock, MagicMock]:
+def mock_using_patch(mocker: MockerFixture) -> tuple[MagicMock, MagicMock]:
     return mocker.patch("os.remove"), mocker.patch("os.listdir")
 
 
-def mock_using_patch_multiple(mocker: MockerFixture) -> Tuple[MagicMock, MagicMock]:
+def mock_using_patch_multiple(mocker: MockerFixture) -> tuple[MagicMock, MagicMock]:
     r = mocker.patch.multiple("os", remove=mocker.DEFAULT, listdir=mocker.DEFAULT)
     return r["remove"], r["listdir"]
 
@@ -156,7 +163,6 @@ def test_mock_patch_dict_resetall(mocker: MockerFixture) -> None:
     [
         "ANY",
         "call",
-        "create_autospec",
         "MagicMock",
         "Mock",
         "mock_open",
@@ -164,12 +170,7 @@ def test_mock_patch_dict_resetall(mocker: MockerFixture) -> None:
         "NonCallableMock",
         "PropertyMock",
         "sentinel",
-        pytest.param(
-            "seal",
-            marks=pytest.mark.skipif(
-                sys.version_info < (3, 7), reason="seal is present on 3.7 and above"
-            ),
-        ),
+        "seal",
     ],
 )
 def test_mocker_aliases(name: str, pytestconfig: Any) -> None:
@@ -185,22 +186,31 @@ def test_mocker_resetall(mocker: MockerFixture) -> None:
     listdir = mocker.patch("os.listdir", return_value="foo")
     open = mocker.patch("os.open", side_effect=["bar", "baz"])
 
+    mocked_object = mocker.create_autospec(TestObject)
+    mocked_object.run.return_value = "mocked"
+
     assert listdir("/tmp") == "foo"
     assert open("/tmp/foo.txt") == "bar"
+    assert mocked_object.run() == "mocked"
     listdir.assert_called_once_with("/tmp")
     open.assert_called_once_with("/tmp/foo.txt")
+    mocked_object.run.assert_called_once()
 
     mocker.resetall()
 
     assert not listdir.called
     assert not open.called
+    assert not mocked_object.called
     assert listdir.return_value == "foo"
     assert list(open.side_effect) == ["baz"]
+    assert mocked_object.run.return_value == "mocked"
 
     mocker.resetall(return_value=True, side_effect=True)
 
     assert isinstance(listdir.return_value, mocker.Mock)
     assert open.side_effect is None
+
+    assert mocked_object.run.return_value != "mocked"
 
 
 class TestMockerStub:
@@ -220,15 +230,14 @@ class TestMockerStub:
 
     def __test_failure_message(self, mocker: MockerFixture, **kwargs: Any) -> None:
         expected_name = kwargs.get("name") or "mock"
-        if NEW_FORMATTING:
-            msg = "expected call not found.\nExpected: {0}()\nActual: not called."
+        if NEWEST_FORMATTING:
+            msg = "expected call not found.\nExpected: {0}()\n  Actual: not called."
         else:
-            msg = "Expected call: {0}()\nNot called"
+            msg = "expected call not found.\nExpected: {0}()\nActual: not called."
         expected_message = msg.format(expected_name)
         stub = mocker.stub(**kwargs)
-        with pytest.raises(AssertionError) as exc_info:
+        with pytest.raises(AssertionError, match=re.escape(expected_message)):
             stub.assert_called_with()
-        assert str(exc_info.value) == expected_message
 
     def test_failure_message_with_no_name(self, mocker: MagicMock) -> None:
         self.__test_failure_message(mocker)
@@ -237,10 +246,6 @@ class TestMockerStub:
     def test_failure_message_with_name(self, mocker: MagicMock, name: str) -> None:
         self.__test_failure_message(mocker, name=name)
 
-    @pytest.mark.skipif(
-        sys.version_info[:2] < (3, 8),
-        reason="This Python version doesn't have `AsyncMock`.",
-    )
     def test_async_stub_type(self, mocker: MockerFixture) -> None:
         assert isinstance(mocker.async_stub(), AsyncMock)
 
@@ -257,8 +262,15 @@ def test_instance_method_spy(mocker: MockerFixture) -> None:
     assert other.bar(arg=10) == 20
     foo.bar.assert_called_once_with(arg=10)  # type:ignore[attr-defined]
     assert foo.bar.spy_return == 20  # type:ignore[attr-defined]
+    assert foo.bar.spy_return_iter is None  # type:ignore[attr-defined]
+    assert foo.bar.spy_return_list == [20]  # type:ignore[attr-defined]
     spy.assert_called_once_with(arg=10)
     assert spy.spy_return == 20
+    assert foo.bar(arg=11) == 22
+    assert foo.bar(arg=12) == 24
+    assert spy.spy_return == 24
+    assert spy.spy_return_iter is None
+    assert spy.spy_return_list == [20, 22, 24]
 
 
 # Ref: https://docs.python.org/3/library/exceptions.html#exception-hierarchy
@@ -274,7 +286,7 @@ def test_instance_method_spy(mocker: MockerFixture) -> None:
     ),
 )
 def test_instance_method_spy_exception(
-    exc_cls: Type[BaseException],
+    exc_cls: type[BaseException],
     mocker: MockerFixture,
 ) -> None:
     class Foo:
@@ -294,17 +306,37 @@ def test_instance_method_spy_exception(
         assert str(spy.spy_exception) == f"Error with {v}"
 
 
-def test_instance_method_spy_autospec_true(mocker: MockerFixture) -> None:
+def test_instance_class_static_method_spy_autospec_true(mocker: MockerFixture) -> None:
     class Foo:
         def bar(self, arg):
             return arg * 2
 
+        @classmethod
+        def baz(cls, arg):
+            return arg * 2
+
+        @staticmethod
+        def qux(arg):
+            return arg * 2
+
     foo = Foo()
-    spy = mocker.spy(foo, "bar")
+    instance_method_spy = mocker.spy(foo, "bar")
     with pytest.raises(
         AttributeError, match="'function' object has no attribute 'fake_assert_method'"
     ):
-        spy.fake_assert_method(arg=5)
+        instance_method_spy.fake_assert_method(arg=5)
+
+    class_method_spy = mocker.spy(Foo, "baz")
+    with pytest.raises(
+        AttributeError, match="Mock object has no attribute 'fake_assert_method'"
+    ):
+        class_method_spy.fake_assert_method(arg=5)
+
+    static_method_spy = mocker.spy(Foo, "qux")
+    with pytest.raises(
+        AttributeError, match="Mock object has no attribute 'fake_assert_method'"
+    ):
+        static_method_spy.fake_assert_method(arg=5)
 
 
 def test_spy_reset(mocker: MockerFixture) -> None:
@@ -316,10 +348,14 @@ def test_spy_reset(mocker: MockerFixture) -> None:
 
     spy = mocker.spy(Foo, "bar")
     assert spy.spy_return is None
+    assert spy.spy_return_iter is None
+    assert spy.spy_return_list == []
     assert spy.spy_exception is None
 
     Foo().bar(10)
     assert spy.spy_return == 30
+    assert spy.spy_return_iter is None
+    assert spy.spy_return_list == [30]
     assert spy.spy_exception is None
 
     # Testing spy can still be reset (#237).
@@ -328,10 +364,14 @@ def test_spy_reset(mocker: MockerFixture) -> None:
     with pytest.raises(ValueError):
         Foo().bar(0)
     assert spy.spy_return is None
+    assert spy.spy_return_iter is None
+    assert spy.spy_return_list == []
     assert str(spy.spy_exception) == "invalid x"
 
     Foo().bar(15)
     assert spy.spy_return == 45
+    assert spy.spy_return_iter is None
+    assert spy.spy_return_list == [45]
     assert spy.spy_exception is None
 
 
@@ -367,6 +407,8 @@ def test_instance_method_by_subclass_spy(mocker: MockerFixture) -> None:
     calls = [mocker.call(foo, arg=10), mocker.call(other, arg=10)]
     assert spy.call_args_list == calls
     assert spy.spy_return == 20
+    assert spy.spy_return_iter is None
+    assert spy.spy_return_list == [20, 20]
 
 
 @skip_pypy
@@ -380,19 +422,12 @@ def test_class_method_spy(mocker: MockerFixture) -> None:
     assert Foo.bar(arg=10) == 20
     Foo.bar.assert_called_once_with(arg=10)  # type:ignore[attr-defined]
     assert Foo.bar.spy_return == 20  # type:ignore[attr-defined]
+    assert Foo.bar.spy_return_iter is None  # type:ignore[attr-defined]
+    assert Foo.bar.spy_return_list == [20]  # type:ignore[attr-defined]
     spy.assert_called_once_with(arg=10)
     assert spy.spy_return == 20
-
-
-@skip_pypy
-def test_class_method_spy_autospec_false(mocker: MockerFixture) -> None:
-    class Foo:
-        @classmethod
-        def bar(cls, arg):
-            return arg * 2
-
-    spy = mocker.spy(Foo, "bar")
-    spy.fake_assert_method()
+    assert spy.spy_return_iter is None
+    assert spy.spy_return_list == [20]
 
 
 @skip_pypy
@@ -409,8 +444,12 @@ def test_class_method_subclass_spy(mocker: MockerFixture) -> None:
     assert Foo.bar(arg=10) == 20
     Foo.bar.assert_called_once_with(arg=10)  # type:ignore[attr-defined]
     assert Foo.bar.spy_return == 20  # type:ignore[attr-defined]
+    assert Foo.bar.spy_return_iter is None  # type:ignore[attr-defined]
+    assert Foo.bar.spy_return_list == [20]  # type:ignore[attr-defined]
     spy.assert_called_once_with(arg=10)
     assert spy.spy_return == 20
+    assert spy.spy_return_iter is None
+    assert spy.spy_return_list == [20]
 
 
 @skip_pypy
@@ -429,8 +468,12 @@ def test_class_method_with_metaclass_spy(mocker: MockerFixture) -> None:
     assert Foo.bar(arg=10) == 20
     Foo.bar.assert_called_once_with(arg=10)  # type:ignore[attr-defined]
     assert Foo.bar.spy_return == 20  # type:ignore[attr-defined]
+    assert Foo.bar.spy_return_iter is None  # type:ignore[attr-defined]
+    assert Foo.bar.spy_return_list == [20]  # type:ignore[attr-defined]
     spy.assert_called_once_with(arg=10)
     assert spy.spy_return == 20
+    assert spy.spy_return_iter is None
+    assert spy.spy_return_list == [20]
 
 
 @skip_pypy
@@ -444,8 +487,12 @@ def test_static_method_spy(mocker: MockerFixture) -> None:
     assert Foo.bar(arg=10) == 20
     Foo.bar.assert_called_once_with(arg=10)  # type:ignore[attr-defined]
     assert Foo.bar.spy_return == 20  # type:ignore[attr-defined]
+    assert Foo.bar.spy_return_iter is None  # type:ignore[attr-defined]
+    assert Foo.bar.spy_return_list == [20]  # type:ignore[attr-defined]
     spy.assert_called_once_with(arg=10)
     assert spy.spy_return == 20
+    assert spy.spy_return_iter is None
+    assert spy.spy_return_list == [20]
 
 
 @skip_pypy
@@ -462,8 +509,12 @@ def test_static_method_subclass_spy(mocker: MockerFixture) -> None:
     assert Foo.bar(arg=10) == 20
     Foo.bar.assert_called_once_with(arg=10)  # type:ignore[attr-defined]
     assert Foo.bar.spy_return == 20  # type:ignore[attr-defined]
+    assert Foo.bar.spy_return_iter is None  # type:ignore[attr-defined]
+    assert Foo.bar.spy_return_list == [20]  # type:ignore[attr-defined]
     spy.assert_called_once_with(arg=10)
     assert spy.spy_return == 20
+    assert spy.spy_return_iter is None
+    assert spy.spy_return_list == [20]
 
 
 def test_callable_like_spy(testdir: Any, mocker: MockerFixture) -> None:
@@ -484,8 +535,90 @@ def test_callable_like_spy(testdir: Any, mocker: MockerFixture) -> None:
     uut.call_like(10)
     spy.assert_called_once_with(10)
     assert spy.spy_return == 20
+    assert spy.spy_return_iter is None
+    assert spy.spy_return_list == [20]
 
 
+@pytest.mark.parametrize("iterator", [(i for i in range(3)), iter([0, 1, 2])])
+def test_spy_return_iter_duplicates_iterator_when_enabled(
+    mocker: MockerFixture, iterator: Iterator[int]
+) -> None:
+    class Foo:
+        def bar(self) -> Iterator[int]:
+            return iterator
+
+    foo = Foo()
+    spy = mocker.spy(foo, "bar", duplicate_iterators=True)
+    result = list(foo.bar())
+
+    assert result == [0, 1, 2]
+    assert spy.spy_return is not None
+    assert spy.spy_return_iter is not None
+    assert list(spy.spy_return_iter) == result
+
+    [return_value] = spy.spy_return_list
+    assert isinstance(return_value, Iterator)
+
+
+@pytest.mark.parametrize("iterator", [(i for i in range(3)), iter([0, 1, 2])])
+def test_spy_return_iter_is_not_set_when_disabled(
+    mocker: MockerFixture, iterator: Iterator[int]
+) -> None:
+    class Foo:
+        def bar(self) -> Iterator[int]:
+            return iterator
+
+    foo = Foo()
+    spy = mocker.spy(foo, "bar", duplicate_iterators=False)
+    result = list(foo.bar())
+
+    assert result == [0, 1, 2]
+    assert spy.spy_return is not None
+    assert spy.spy_return_iter is None
+    [return_value] = spy.spy_return_list
+    assert isinstance(return_value, Iterator)
+
+
+@pytest.mark.parametrize("iterable", [(0, 1, 2), [0, 1, 2], range(3)])
+def test_spy_return_iter_ignores_plain_iterable(
+    mocker: MockerFixture, iterable: Iterable[int]
+) -> None:
+    class Foo:
+        def bar(self) -> Iterable[int]:
+            return iterable
+
+    foo = Foo()
+    spy = mocker.spy(foo, "bar", duplicate_iterators=True)
+    result = foo.bar()
+
+    assert result == iterable
+    assert spy.spy_return == result
+    assert spy.spy_return_iter is None
+    assert spy.spy_return_list == [result]
+
+
+def test_spy_return_iter_resets(mocker: MockerFixture) -> None:
+    class Foo:
+        iterables: Any = [
+            (i for i in range(3)),
+            99,
+        ]
+
+        def bar(self) -> Any:
+            return self.iterables.pop(0)
+
+    foo = Foo()
+    spy = mocker.spy(foo, "bar", duplicate_iterators=True)
+    result_iterator = list(foo.bar())
+
+    assert result_iterator == [0, 1, 2]
+    assert list(spy.spy_return_iter) == result_iterator
+
+    assert foo.bar() == 99
+    assert spy.spy_return_iter is None
+
+
+@pytest.mark.asyncio
 async def test_instance_async_method_spy(mocker: MockerFixture) -> None:
     class Foo:
         async def bar(self, arg):
@@ -527,7 +660,12 @@ def assert_argument_introspection(left: Any, right: Any) -> Generator[None, None
         # NOTE: we assert with either verbose or not, depending on how our own
         #       test was run by examining sys.argv
         verbose = any(a.startswith("-v") for a in sys.argv)
-        expected = "\n  ".join(util._compare_eq_iterable(left, right, verbose))
+        if int(pytest.__version__.split(".")[0]) < 8:
+            expected = "\n  ".join(util._compare_eq_iterable(left, right, verbose))  # type:ignore[arg-type]
+        else:
+            expected = "\n  ".join(
+                util._compare_eq_iterable(left, right, lambda t, *_, **__: t, verbose)  # type:ignore[arg-type]
+            )
         assert expected in str(e)
     else:
         raise AssertionError("DID NOT RAISE")
@@ -835,35 +973,26 @@ def test_detailed_introspection(testdir: Any) -> None:
     """
     )
     result = testdir.runpytest("-s")
-    if NEW_FORMATTING:
-        expected_lines = [
-            "*AssertionError: expected call not found.",
-            "*Expected: mock('', bar=4)",
-            "*Actual: mock('fo')",
-        ]
-    else:
-        expected_lines = [
-            "*AssertionError: Expected call: mock('', bar=4)*",
-            "*Actual call: mock('fo')*",
-        ]
+    expected_lines = [
+        "*AssertionError: expected call not found.",
+        "*Expected: mock('', bar=4)",
+        "*Actual: mock('fo')",
+    ]
     expected_lines += [
         "*pytest introspection follows:*",
         "*Args:",
         "*assert ('fo',) == ('',)",
         "*At index 0 diff: 'fo' != ''*",
-        "*Use -v to get more diff*",
+        "*Use -v to*",
         "*Kwargs:*",
         "*assert {} == {'bar': 4}*",
         "*Right contains* more item*",
         "*{'bar': 4}*",
-        "*Use -v to get more diff*",
+        "*Use -v to*",
     ]
     result.stdout.fnmatch_lines(expected_lines)
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 8), reason="AsyncMock is present on 3.8 and above"
-)
 @pytest.mark.usefixtures("needs_assert_rewrite")
 def test_detailed_introspection_async(testdir: Any) -> None:
     """Check that the "mock_use_standalone" is being used."""
@@ -892,12 +1021,12 @@ def test_detailed_introspection_async(testdir: Any) -> None:
         "*Args:",
         "*assert ('fo',) == ('',)",
         "*At index 0 diff: 'fo' != ''*",
-        "*Use -v to get more diff*",
+        "*Use -v to*",
         "*Kwargs:*",
         "*assert {} == {'bar': 4}*",
         "*Right contains* more item*",
         "*{'bar': 4}*",
-        "*Use -v to get more diff*",
+        "*Use -v to*",
     ]
     result.stdout.fnmatch_lines(expected_lines)
 
@@ -963,7 +1092,7 @@ def test_warn_patch_object_context_manager(mocker: MockerFixture) -> None:
         "Mocks returned by pytest-mock do not need to be used as context managers. "
         "The mocker fixture automatically undoes mocking at the end of a test. "
         "This warning can be ignored if it was triggered by mocking a context manager. "
-        "https://pytest-mock.readthedocs.io/en/latest/remarks.html#usage-as-context-manager"
+        "https://pytest-mock.readthedocs.io/en/latest/usage.html#usage-as-context-manager"
     )
 
     with pytest.warns(
@@ -980,7 +1109,7 @@ def test_warn_patch_context_manager(mocker: MockerFixture) -> None:
         "Mocks returned by pytest-mock do not need to be used as context managers. "
         "The mocker fixture automatically undoes mocking at the end of a test. "
         "This warning can be ignored if it was triggered by mocking a context manager. "
-        "https://pytest-mock.readthedocs.io/en/latest/remarks.html#usage-as-context-manager"
+        "https://pytest-mock.readthedocs.io/en/latest/usage.html#usage-as-context-manager"
     )
 
     with pytest.warns(
@@ -1008,7 +1137,7 @@ def test_context_manager_patch_example(mocker: MockerFixture) -> None:
         with dummy_module.MyContext() as v:
             return v
 
-    m = mocker.patch.object(dummy_module, "MyContext")
+    mocker.patch.object(dummy_module, "MyContext")
     assert isinstance(my_func(), mocker.MagicMock)
 
 
@@ -1231,3 +1360,28 @@ def test_stop_instance_spy(mocker):
     mocker.stop(spy)
     assert un_spy.foo() == 42
     assert spy.call_count == 1
+
+
+def test_stop_multiple_patches(mocker: MockerFixture) -> None:
+    """Regression for #420."""
+
+    class Class1:
+        @staticmethod
+        def get():
+            return 1
+
+    class Class2:
+        @staticmethod
+        def get():
+            return 2
+
+    def handle_get():
+        return 3
+
+    mocker.patch.object(Class1, "get", handle_get)
+    mocker.patch.object(Class2, "get", handle_get)
+
+    mocker.stopall()
+
+    assert Class1.get() == 1
+    assert Class2.get() == 2

@@ -1,7 +1,65 @@
 Releases
 ========
 
+3.15.1
+------
+
+*2025-09-16*
+
+* `#529 <https://github.com/pytest-dev/pytest-mock/issues/529>`_: Fixed ``itertools._tee object has no attribute error`` -- now ``duplicate_iterators=True`` must be passed to ``mocker.spy`` to duplicate iterators.
+
+3.15.0
+------
+
+*2025-09-04*
+
+* Python 3.8 (EOL) is no longer supported.
+* `#524 <https://github.com/pytest-dev/pytest-mock/pull/524>`_: Added ``spy_return_iter`` to ``mocker.spy``, which contains a duplicate of the return value of the spied method if it is an ``Iterator``.
+
+3.14.1 (2025-05-26)
+-------------------
+
+* `#503 <https://github.com/pytest-dev/pytest-mock/pull/503>`_: Python 3.14 is now officially supported.
+
+3.14.0 (2024-03-21)
+-------------------
+
+* `#415 <https://github.com/pytest-dev/pytest-mock/pull/415>`_: ``MockType`` and ``AsyncMockType`` can be imported from ``pytest_mock`` for type annotation purposes.
+
+* `#420 <https://github.com/pytest-dev/pytest-mock/issues/420>`_: Fixed a regression which would cause ``mocker.patch.object`` to not being properly cleared between tests.
+
+
+3.13.0 (2024-03-21)
+-------------------
+
+* `#417 <https://github.com/pytest-dev/pytest-mock/pull/417>`_: ``spy`` now has ``spy_return_list``, which is a list containing all the values returned by the spied function.
+* ``pytest-mock`` now requires ``pytest>=6.2.5``.
+* `#410 <https://github.com/pytest-dev/pytest-mock/pull/410>`_: pytest-mock's ``setup.py`` file is removed.
+  If you relied on this file, e.g. to install pytest using ``setup.py install``,
+  please see `Why you shouldn't invoke setup.py directly <https://blog.ganssle.io/articles/2021/10/setup-py-deprecated.html#summary>`_ for alternatives.
+
+3.12.0 (2023-10-19)
+-------------------
+
+* Added support for Python 3.12.
+* Dropped support for EOL Python 3.7.
+* ``mocker.resetall()`` now also resets mocks created by ``mocker.create_autospec`` (`#390`_).
+
+.. _#390: https://github.com/pytest-dev/pytest-mock/pull/390
+
 3.11.1 (2023-06-15)
+-------------------
+
+(This release source code is identical to ``3.11.0`` except a small internal fix to deployment/CI)
+
+* Fixed introspection for failed ``assert_has_calls`` (`#365`_).
+
+* Updated type annotations for ``mocker.patch`` and ``mocker.spy`` (`#364`_).
+
+.. _#365: https://github.com/pytest-dev/pytest-mock/pull/365
+.. _#364: https://github.com/pytest-dev/pytest-mock/pull/364
+
+3.11.0 (2023-06-15)
 -------------------
 
 * Fixed introspection for failed ``assert_has_calls`` (`#365`_).

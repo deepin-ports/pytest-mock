@@ -1,0 +1,20 @@
+From: Roland Mas <lolando@debian.org>
+Date: Wed, 30 Oct 2024 14:54:59 +0100
+Subject: Define asyncio_default_fixture_loop_scope for pytest-asyncio >= 0.24
+
+---
+ tox.ini | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/tox.ini b/tox.ini
+index 20273f7..fd3b311 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -19,6 +19,7 @@ commands =
+ [pytest]
+ addopts = -r a
+ asyncio_mode = auto
++asyncio_default_fixture_loop_scope = function
+ 
+ [flake8]
+ max-line-length = 88
